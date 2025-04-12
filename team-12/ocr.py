@@ -1,6 +1,11 @@
+from pickletools import optimize
 import pytesseract
 import cv2
 import numpy as np
+from operator import itemgetter
+import re
+from datetime import datetime
+from string import ascii_letters, digits
 import re
 from datetime import datetime
 
@@ -16,11 +21,6 @@ from .race_result import RaceResult
 root = Path(__file__).parent
 pytesseract.pytesseract.tesseract_cmd = root / "tesseract/tesseract.exe"
 imgs_path = root / "race_photo_results"
-
-
-allowable_chars = "абвгдеёжзийклмнопрстуфхцчшщъыэюя"
-allowable_chars += allowable_chars.upper()
-allowable_chars += " "
 
 
 participants = (
@@ -62,15 +62,11 @@ def find_closest_race_type(ocr_race_type):
     return race_types[guess], confidence
 
 
-es24_folder = root / "race_results/es24"
-
-from operator import itemgetter
-import re
-from datetime import datetime
-from string import ascii_letters, digits
-
-
-def find_contours(thresh_img):
+def find_contours(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    thresh = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2
+    )
     # Detect horizontal/vertical lines
     kernel_h = np.ones((1, 20), np.uint8)
     kernel_v = np.ones((20, 1), np.uint8)
@@ -127,6 +123,34 @@ def _ocr(img_part, chars=None, lang="rus"):
     )
 
 
+def _ocr_with_fallback(img, slices, resize_to, optional_stage=None, **ocr_params):
+    optional_stage = (lambda t: t) if optional_stage is None else optional_stage
+
+    def parse_text():
+        text = _ocr(t_img, **ocr_params)
+        return optional_stage(text).strip()
+
+    t_img = img[*slices].copy()
+    text = parse_text()
+    if not text:
+        t_img = cv2.resize(t_img, resize_to, interpolation=cv2.INTER_CUBIC)
+        text = parse_text()
+    return text
+
+
+def match_date(orc_date):
+    date_match = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", ocr_date.strip())
+    try:
+        race_date = (
+            datetime.strptime(date_match.group(0), "%d.%m.%Y").date()
+            if date_match
+            else ocr_date.strip()
+        )
+    except ValueError:
+        race_date = ""
+    return race_date
+
+
 def parse_header(img, upper_y_cell):
     x, y, w, h = cv2.boundingRect(upper_y_cell)
     ih, iw, _ = img.shape
@@ -150,128 +174,65 @@ def parse_header(img, upper_y_cell):
     date_margin = 2  # px
 
     x, y, w, h = cv2.boundingRect(race_type_cnt)
-    t_img = himg[
-        y - race_type_margin : y + h + race_type_margin, x - margin : x + w + margin
-    ]
-    ocr_race_type = _ocr(t_img, f"{ascii_letters}{digits}-/", lang="eng")
-    # ocr_race_type = pytesseract.image_to_string(
-    #     t_img,
-    #     config=f"-c tessedit_char_whitelist={ascii_letters}{digits}-/ -c preserve_interword_spaces=1",
-    #     lang="eng",
-    # )
-    race_type = find_closest_race_type(ocr_race_type)
+    y_slice = slice(y - race_type_margin, y + h + race_type_margin)
+    x_slice = slice(x - margin, x + w + margin)
+    race_type = _ocr_with_fallback(
+        himg,
+        (y_slice, x_slice),
+        resize_to=(w * 2, h * 2),
+        optional_stage=find_closest_race_type,
+        chars=f"{ascii_letters}{digits}-/",
+        lang="eng",
+    )
+    # t_img = himg[y_slice, x_slice]
+    # ocr_race_type = _ocr(t_img, f"{ascii_letters}{digits}-/", lang="eng")
+    # race_type = find_closest_race_type(ocr_race_type)
 
     x, y, w, h = cv2.boundingRect(race_date_cnt)
-    t_img = himg[
-        y - date_margin : y + h + date_margin, x + int(w / 3) - margin : x + w + margin
-    ]
-    ocr_date = _ocr(t_img, f"{digits}.", lang="eng")
-    # ocr_date = pytesseract.image_to_string(
-    #     t_img,
-    #     config=f"-c tessedit_char_whitelist={digits}. -c preserve_interword_spaces=1",
-    #     lang="eng",
-    # )
-    date_match = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", ocr_date.strip())
-    try:
-        race_date = (
-            datetime.strptime(date_match.group(0), "%d.%m.%Y").date()
-            if date_match
-            else ocr_date.strip()
-        )
-    except ValueError:
-        race_date = ""
-    if not race_date:
-        t_img = t_img.copy()
-        h, w, _ = t_img.shape
-        t_img = cv2.resize(t_img, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
-        ocr_date = _ocr(t_img, f"{digits}.", lang="eng")
-        # ocr_date = pytesseract.image_to_string(
-        #     t_img,
-        #     config=f"-c tessedit_char_whitelist={digits}. -c preserve_interword_spaces=1",
-        #     lang="eng",
-        # )
-        date_match = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", ocr_date.strip())
-        race_date = (
-            datetime.strptime(date_match.group(0), "%d.%m.%Y").date()
-            if date_match
-            else ocr_date.strip()
-        )
+    y_slice = slice(y - date_margin, y + h + date_margin)
+    x_slice = slice(x + w // 3 - margin, x + w + margin)
+    rh, rw, _ = himg[y_slice, x_slice].shape
+    race_date = _ocr_with_fallback(
+        himg,
+        (y_slice, x_slice),
+        resize_to=(rw, rh),
+        optional_stage=mathc_date,
+        chars=f"{ascii_letters}{digits}-/",
+        lang="end",
+    )
+
+    # t_img = himg[y_slice, x_slice].copy()
+    # ocr_date = _ocr(t_img, f"{digits}.", lang="eng")
+
+    # race_date = match_date(ocr_date)
+
+    # ocr_date = _ocr(t_img, f"{digits}.", lang="eng")
+
+    # date_match = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", ocr_date.strip())
+    # try:
+    #     race_date = (
+    #         datetime.strptime(date_match.group(0), "%d.%m.%Y").date()
+    #         if date_match
+    #         else ocr_date.strip()
+    #     )
+    # except ValueError:
+    #     race_date = ""
+    # if not race_date:
+    #     h, w, _ = t_img.shape
+    #     t_img = cv2.resize(t_img, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
+    #     ocr_date = _ocr(t_img, f"{digits}.", lang="eng")
+
+    #     race_date = match_date(ocr_date)
 
     return race_type, race_date
 
 
-margin = 3
-resize_coeff = 2
-
-for es24_img in es24_folder.iterdir():
-    img = cv2.imread(es24_img)
-    if img is None:
-        continue
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    thresh = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2
-    )
-
-    cells = []
-    iw, ih, _ = img.shape
-    # Find contours of cells
-    contours = find_contours(thresh)
-    n_cnt = 0
-    success = 0
-    cnt_x_y = ((cnt, cv2.boundingRect(cnt)[:2]) for cnt in contours)
-    cnt_x_y = sorted(cnt_x_y, key=lambda c: (c[1][1], c[1][0]))
-    contours = [cnt for cnt, _ in cnt_x_y if filter_cnt(gray, cnt)]
-
-    print(es24_img.name)
-    race_type, date = parse_header(img, contours[0])
-    print(race_type, repr(date))
-    continue
-
-    for cnt, _ in cnt_x_y:
-        x, y, w, h = cv2.boundingRect(cnt)
-        area = cv2.contourArea(cnt)
-        if not filter_cnt(gray, cnt):
-            continue
-        n_cnt += 1
-        cells.append((x, y, w, h))
-        t_img = img[
-            y + margin : y + h - margin, x + margin : x + int(w / 2) - margin
-        ].copy()
-        line_text = pytesseract.image_to_string(
-            t_img,
-            config=f"-c tessedit_char_whitelist={allowable_chars + ' '} -c preserve_interword_spaces=1",
-            lang=lang,
-        )
-        if not line_text.strip():
-            t_img = cv2.resize(
-                t_img,
-                (int(w / 2) * resize_coeff, h * resize_coeff),
-                interpolation=cv2.INTER_CUBIC,
-            )
-            line_text = pytesseract.image_to_string(
-                t_img,
-                config=f"-c tessedit_char_whitelist={allowable_chars + ' '} -c preserve_interword_spaces=1",
-                lang=lang,
-            )
-        print(f"{line_text.strip()!r}, {find_closest_participant(line_text)}")
-        if line_text.strip():
-            success += 1
-    print(f"success rate {success} / {n_cnt} ({success / n_cnt:.2%})")
-    print(n_cnt)
-    print(es24_img)
-    print()
-
-
-def parse_participants(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    thresh = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2
-    )
-
+def parse_participants(img, margin=3, resize_coeff=2):
     cells = []
     ih, iw, _ = img.shape
     # Find contours of cells
-    contours = find_contours(thresh)
+    contours = find_contours(img)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     contours = sorted(
         (cnt for cnt in contours if filter_cnt(gray, cnt)),
         key=lambda c: cv2.boundingRect(c)[1::-1],
@@ -282,34 +243,32 @@ def parse_participants(img):
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
         n_cnt += 1
-        t_img = img[
-            y + margin : y + h - margin, x + margin : x + int(w / 2) - margin
-        ].copy()
-        line_text = _ocr(t_img)
-        # line_text = pytesseract.image_to_string(
-        #     t_img,
-        #     config=f"-c tessedit_char_whitelist={allowable_chars + ' '} -c preserve_interword_spaces=1",
-        #     lang="rus",
-        # )
-        if not line_text.strip():
-            t_img = cv2.resize(
-                t_img,
-                (int(w / 2) * resize_coeff, h * resize_coeff),
-                interpolation=cv2.INTER_CUBIC,
-            )
-            line_text = _ocr(t_img)
-            # line_text = pytesseract.image_to_string(
-            #     t_img,
-            #     config=f"-c tessedit_char_whitelist={allowable_chars + ' '} -c preserve_interword_spaces=1",
-            #     lang="rus",
-            # )
-        print(f"{line_text.strip()!r}, {find_closest_participant(line_text)}")
+
+        y_slice = slice(y + margin, y + h - margin)
+        x_slice = slice(x + margin, x + w // 2 - margin)
+        resize_to = (w // 2 * resize_coeff, h * resize_coeff)
+        line_text = _ocr_with_fallback(img, (y_slice, x_slice), resize_coeff)
+
+        # t_img = img[
+        #     y + margin : y + h - margin, x + margin : x + int(w / 2) - margin
+        # ].copy()
+        # line_text = _ocr(t_img)
+
+        # if not line_text.strip():
+        #     t_img = cv2.resize(
+        #         t_img,
+        #         (int(w / 2) * resize_coeff, h * resize_coeff),
+        #         interpolation=cv2.INTER_CUBIC,
+        #     )
+        #     line_text = _ocr(t_img)
+
+        # print(f"{line_text.strip()!r}, {find_closest_participant(line_text)}")
         if line_text.strip():
             success += 1
-    print(f"success rate {success} / {n_cnt} ({success / n_cnt:.2%})")
-    print(n_cnt)
-    print(es24_img)
-    print()
+    # print(f"success rate {success} / {n_cnt} ({success / n_cnt:.2%})")
+    # print(n_cnt)
+    # print(es24_img)
+    # print()
 
 
 def ocr_image(img_path):
