@@ -1,4 +1,3 @@
-from pickletools import optimize
 import pytesseract
 import cv2
 import numpy as np
@@ -16,7 +15,7 @@ import json
 
 from pathlib import Path
 
-from .race_result import RaceResult
+from race_result import RaceResult
 
 root = Path(__file__).parent
 pytesseract.pytesseract.tesseract_cmd = root / "tesseract/tesseract.exe"
@@ -87,7 +86,7 @@ def filter_cnt(gray_img, cnt):
     return (
         w > h
         and 11 < w / h < 20
-        and 130 < np.median(gray[y : y + h, x : x + w]) < 230
+        and 130 < np.median(gray_img[y : y + h, x : x + w]) < 230
         and 0.9 < w * h / (iw * ih) * 100 < 2.9
     )
 
@@ -102,23 +101,27 @@ def find_header_contours(img):
 
     # Find contours of text blocks
     contours, _ = cv2.findContours(dilated, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-    return img
+    return contours
 
 
 def filter_header_cnt(himg, cnt):
     x, y, w, h = cv2.boundingRect(cnt)
     iw, ih, _ = himg.shape
-    gray = cv2.cvtColor(himg, cv2.COLOR_BGR2GRAY)
     return w > h and 4 < w / h < 35 and 0.3 < w * h / (iw * ih) * 100 < 6
 
 
 def _ocr(img_part, chars=None, lang="rus"):
+    tessedit = "whitelist"
     if chars is None:
-        chars = "абвгдеёжзийклмнопрстуфхцчшщъыэюя"
-        chars += chars.upper() + " "
+        # should work, but on a fucking windows it doesn't,
+        # not with 'whitelist', not with 'blacklist'
+        # chars = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"
+        # chars += chars.upper() + " "
+        chars = "0123456789!@#$%^&*()_+-=[]{};:,./<>?`~"
+        tessedit = "blocklist"
     return pytesseract.image_to_string(
         img_part,
-        config=f"-c tessedit_char_whitelist={chars} -c preserve_interword_spaces=1",
+        config=f"-c tessedit_char_{tessedit}={chars} -c preserve_interword_spaces=1",
         lang=lang,
     )
 
@@ -126,19 +129,19 @@ def _ocr(img_part, chars=None, lang="rus"):
 def _ocr_with_fallback(img, slices, resize_to, optional_stage=None, **ocr_params):
     optional_stage = (lambda t: t) if optional_stage is None else optional_stage
 
-    def parse_text():
+    def parse_text(t_img):
         text = _ocr(t_img, **ocr_params)
         return optional_stage(text)
 
     t_img = img[*slices].copy()
-    text, confidence = parse_text()
+    text, confidence = parse_text(t_img)
     if not text:
         t_img = cv2.resize(t_img, resize_to, interpolation=cv2.INTER_CUBIC)
-        text, confidence = parse_text()
+        text, confidence = parse_text(t_img)
     return text, confidence
 
 
-def match_date(orc_date):
+def match_date(ocr_date):
     date_match = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", ocr_date.strip())
     try:
         race_date = (
@@ -146,11 +149,16 @@ def match_date(orc_date):
             if date_match
             else ocr_date.strip()
         )
-        confidence = 90
     except ValueError:
         race_date = ""
-        confindence = 0
+    confidence = 90 if race_date.strip() else 0
     return race_date, confidence
+
+
+def imshow(img):
+    ...
+    # cv2.imshow("temp", img)
+    # cv2.waitKey(0)
 
 
 def parse_header(img, upper_y_cell):
@@ -167,6 +175,11 @@ def parse_header(img, upper_y_cell):
         (cnt for cnt in contours if filter_header_cnt(himg, cnt)),
         key=lambda c: cv2.boundingRect(c)[1::-1],
     )
+    hhimg = himg.copy()
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        cv2.rectangle(hhimg, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    imshow(hhimg)
 
     race_type_cnt = contours[0]
     race_date_cnt = contours[2]
@@ -196,15 +209,14 @@ def parse_header(img, upper_y_cell):
         (y_slice, x_slice),
         resize_to=(rw, rh),
         optional_stage=match_date,
-        chars=f"{ascii_letters}{digits}-/",
-        lang="end",
+        chars=f"{digits}.",
+        lang="eng",
     )
 
     return race_type, race_date
 
 
 def parse_participants(img, margin=3, resize_coeff=2):
-    ih, iw, _ = img.shape
     # Find contours of cells
     contours = find_contours(img)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -212,12 +224,23 @@ def parse_participants(img, margin=3, resize_coeff=2):
         (cnt for cnt in contours if filter_cnt(gray, cnt)),
         key=lambda c: cv2.boundingRect(c)[1::-1],
     )
+    # skip the "Участник" cell
+    upper_y_cell, *contours = contours
+
+    # print(cv2.boundingRect(upper_y_cell))
+    # print(f"participanst cnt: {len(contours)}")
+
+    ttimg = img.copy()
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        cv2.rectangle(ttimg, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    imshow(ttimg)
+
     n_cnt = 0
     success = 0
 
     participants = []
-    # skip the "Участник" cell
-    for cnt in contours[1:]:
+    for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
         n_cnt += 1
 
@@ -227,19 +250,33 @@ def parse_participants(img, margin=3, resize_coeff=2):
         line_text = _ocr_with_fallback(
             img,
             (y_slice, x_slice),
-            resize_coeff,
+            resize_to=resize_to,
             optional_stage=find_closest_participant,
         )
 
         success += bool(line_text)
         participants.append(line_text)
-    return participants
+        # print(line_text)
+    return participants, upper_y_cell
 
 
 def ocr_image(img_path):
-    img = cv2.imread(img_path)
+    img = cv2.imread(str(img_path))
 
     participants, upper_y_cell = parse_participants(img)
     race_type, race_date = parse_header(img, upper_y_cell)
 
     return RaceResult(race_type, race_date, participants)
+
+
+if __name__ == "__main__":
+    from pprint import pprint
+
+    for img_dir in imgs_path.iterdir():
+        for img in img_dir.iterdir():
+            print(img)
+            pprint(ocr_image(img))
+            print()
+    # img = imgs_path / "es24/457241239.jpg"
+    # rr = ocr_image(img)
+    # print(rr)
