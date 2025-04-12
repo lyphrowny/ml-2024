@@ -128,14 +128,14 @@ def _ocr_with_fallback(img, slices, resize_to, optional_stage=None, **ocr_params
 
     def parse_text():
         text = _ocr(t_img, **ocr_params)
-        return optional_stage(text).strip()
+        return optional_stage(text)
 
     t_img = img[*slices].copy()
-    text = parse_text()
+    text, confidence = parse_text()
     if not text:
         t_img = cv2.resize(t_img, resize_to, interpolation=cv2.INTER_CUBIC)
-        text = parse_text()
-    return text
+        text, confidence = parse_text()
+    return text, confidence
 
 
 def match_date(orc_date):
@@ -146,9 +146,11 @@ def match_date(orc_date):
             if date_match
             else ocr_date.strip()
         )
+        confidence = 90
     except ValueError:
         race_date = ""
-    return race_date
+        confindence = 0
+    return race_date, confidence
 
 
 def parse_header(img, upper_y_cell):
@@ -184,9 +186,6 @@ def parse_header(img, upper_y_cell):
         chars=f"{ascii_letters}{digits}-/",
         lang="eng",
     )
-    # t_img = himg[y_slice, x_slice]
-    # ocr_race_type = _ocr(t_img, f"{ascii_letters}{digits}-/", lang="eng")
-    # race_type = find_closest_race_type(ocr_race_type)
 
     x, y, w, h = cv2.boundingRect(race_date_cnt)
     y_slice = slice(y - date_margin, y + h + date_margin)
@@ -196,39 +195,15 @@ def parse_header(img, upper_y_cell):
         himg,
         (y_slice, x_slice),
         resize_to=(rw, rh),
-        optional_stage=mathc_date,
+        optional_stage=match_date,
         chars=f"{ascii_letters}{digits}-/",
         lang="end",
     )
-
-    # t_img = himg[y_slice, x_slice].copy()
-    # ocr_date = _ocr(t_img, f"{digits}.", lang="eng")
-
-    # race_date = match_date(ocr_date)
-
-    # ocr_date = _ocr(t_img, f"{digits}.", lang="eng")
-
-    # date_match = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", ocr_date.strip())
-    # try:
-    #     race_date = (
-    #         datetime.strptime(date_match.group(0), "%d.%m.%Y").date()
-    #         if date_match
-    #         else ocr_date.strip()
-    #     )
-    # except ValueError:
-    #     race_date = ""
-    # if not race_date:
-    #     h, w, _ = t_img.shape
-    #     t_img = cv2.resize(t_img, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
-    #     ocr_date = _ocr(t_img, f"{digits}.", lang="eng")
-
-    #     race_date = match_date(ocr_date)
 
     return race_type, race_date
 
 
 def parse_participants(img, margin=3, resize_coeff=2):
-    cells = []
     ih, iw, _ = img.shape
     # Find contours of cells
     contours = find_contours(img)
@@ -240,35 +215,25 @@ def parse_participants(img, margin=3, resize_coeff=2):
     n_cnt = 0
     success = 0
 
-    for cnt in contours:
+    participants = []
+    # skip the "Участник" cell
+    for cnt in contours[1:]:
         x, y, w, h = cv2.boundingRect(cnt)
         n_cnt += 1
 
         y_slice = slice(y + margin, y + h - margin)
         x_slice = slice(x + margin, x + w // 2 - margin)
         resize_to = (w // 2 * resize_coeff, h * resize_coeff)
-        line_text = _ocr_with_fallback(img, (y_slice, x_slice), resize_coeff)
+        line_text = _ocr_with_fallback(
+            img,
+            (y_slice, x_slice),
+            resize_coeff,
+            optional_stage=find_closest_participant,
+        )
 
-        # t_img = img[
-        #     y + margin : y + h - margin, x + margin : x + int(w / 2) - margin
-        # ].copy()
-        # line_text = _ocr(t_img)
-
-        # if not line_text.strip():
-        #     t_img = cv2.resize(
-        #         t_img,
-        #         (int(w / 2) * resize_coeff, h * resize_coeff),
-        #         interpolation=cv2.INTER_CUBIC,
-        #     )
-        #     line_text = _ocr(t_img)
-
-        # print(f"{line_text.strip()!r}, {find_closest_participant(line_text)}")
-        if line_text.strip():
-            success += 1
-    # print(f"success rate {success} / {n_cnt} ({success / n_cnt:.2%})")
-    # print(n_cnt)
-    # print(es24_img)
-    # print()
+        success += bool(line_text)
+        participants.append(line_text)
+    return participants
 
 
 def ocr_image(img_path):
