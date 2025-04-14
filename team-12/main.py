@@ -31,56 +31,6 @@ from ocr import ocr_image
 from race_result import RaceResult
 
 
-def export_excel(self):
-    class_name = self.class_combo.currentText()
-    if not class_name:
-        return
-
-    cursor = self.conn.cursor()
-    cursor.execute(
-        """
-        SELECT p.name, p.position 
-        FROM participants p
-        JOIN races r ON p.race_id = r.id
-        WHERE r.class_name = ?
-        ORDER BY p.position
-    """,
-        (class_name,),
-    )
-
-    df = pd.DataFrame(cursor.fetchall(), columns=["Name", "Position"])
-    df.to_excel(f"{class_name}_results.xlsx", index=False)
-
-
-def export_pdf(self):
-    class_name = self.class_combo.currentText()
-    if not class_name:
-        return
-
-    cursor = self.conn.cursor()
-    cursor.execute(
-        """
-        SELECT p.name, p.position 
-        FROM participants p
-        JOIN races r ON p.race_id = r.id
-        WHERE r.class_name = ?
-        ORDER BY p.position
-    """,
-        (class_name,),
-    )
-
-    pdf = canvas.Canvas(f"{class_name}_results.pdf", pagesize=pagesizes.A4)
-    pdf.setFont("Helvetica", 12)
-    y = 800
-    for row in cursor.fetchall():
-        pdf.drawString(100, y, f"{row[1]}. {row[0]}")
-        y -= 20
-        if y < 50:
-            pdf.showPage()
-            y = 800
-    pdf.save()
-
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -124,14 +74,15 @@ class MainWindow(QMainWindow):
         # import_action.triggered.connect(self.show_image_loader)
         file_menu.addAction(import_action)
 
+        self.tab = {}
         # Export Actions
         export_excel_a = QAction("Export to Excel", self)
-        export_excel_a.triggered.connect(export_excel)
+        export_excel_a.triggered.connect(self.export_excel)
         # export_excel.triggered.connect(self.export_excel)
         file_menu.addAction(export_excel_a)
 
         export_pdf_a = QAction("Export to PDF", self)
-        export_pdf_a.triggered.connect(export_pdf)
+        export_pdf_a.triggered.connect(self.export_pdf)
         # export_pdf.triggered.connect(self.export_pdf)
         file_menu.addAction(export_pdf_a)
 
@@ -188,14 +139,15 @@ class MainWindow(QMainWindow):
         )
         races = cursor.fetchall()
         race_ids, race_dates = list(zip(*races))
-        print(races)
-        print(race_dates)
+        # print(races)
+        # print(race_dates)
         race_dates = [
             datetime.strptime(race_date, "%Y-%m-%d").strftime("%d.%m.%Y")
             for race_date in race_dates
         ]
         rid_to_tcol = dict(zip(race_ids, range(1, 1 + len(race_ids))))
-        print(f"{rid_to_tcol = }")
+        rid_to_rdate = dict(zip(race_ids, race_dates))
+        # print(f"{rid_to_tcol = }")
 
         self.results_table.setColumnCount(2 + len(race_ids))
         self.results_table.setHorizontalHeaderLabels(
@@ -207,7 +159,7 @@ class MainWindow(QMainWindow):
         )
 
         placeholders = lambda what: f"({', '.join('?' for _ in what)})"
-        print(race_ids)
+        # print(race_ids)
 
         cursor.execute(
             f"SELECT participant_id, race_id, position FROM race_results WHERE race_id IN {placeholders(race_ids)}",
@@ -219,7 +171,7 @@ class MainWindow(QMainWindow):
         for p_id, race_id, pos in data:
             pid_to_data[p_id].append((race_id, pos))
         # pid_to_data = dict(zip(p_ids, zip(race_ids, positions)))
-        print(pid_to_data)
+        # print(pid_to_data)
         p_ids = tuple(pid_to_data.keys())
         # print(len(p_ids), len(race_ids), len(positions))
 
@@ -259,30 +211,59 @@ class MainWindow(QMainWindow):
         ]
         rating.extend(range(26, 0, -1))
 
-        tab = {}
-        for i, (p_id, data) in enumerate(pid_to_data.items()):
-            p_name = pid_to_name[p_id]
-            results = [(rid_to_tcol[race_id], rating[pos]) for race_id, pos in data]
-            gl_res = sum(rating[pos] for _, pos in data)
-
-            tab[p_id] = (p_name, results, gl_res)
-
-        gl_res_order = sorted(
-            tab, key=lambda k: (lambda name, res, gl_res: (-gl_res, name))(*tab[k])
+        self.tab = pd.DataFrame(
+            columns=["participant", *race_dates, "res"], index=p_ids
         )
 
-        for i, p_id in enumerate(gl_res_order):
-            p_name, results, gl_res = tab[p_id]
-            # p_name = pid_to_name[p_id]
-            # results = [(rid_to_tcol[race_id], rating[pos]) for race_id, pos in data]
-            # gl_res = sum(rating[pos] for _, pos in data)
+        # self.tab = {}
+        for i, (p_id, data) in enumerate(pid_to_data.items()):
+            p_name = pid_to_name[p_id]
+            self.tab.loc[p_id, "participant"] = p_name
+            for race_id, pos in data:
+                self.tab.loc[p_id, rid_to_rdate[race_id]] = rating[pos]
+        self.tab = self.tab.fillna(0)
+        self.tab["res"] = self.tab[[*race_dates]].sum(axis=1)
 
-            self.results_table.setItem(i, 0, QTableWidgetItem(str(p_name)))
-            for rcol, score in results:
-                self.results_table.setItem(i, rcol, QTableWidgetItem(str(score)))
-            self.results_table.setItem(
-                i, self.results_table.columnCount() - 1, QTableWidgetItem(str(gl_res))
-            )
+        self.tab = self.tab.sort_values(
+            by=["res", "participant"], ascending=[False, False]
+        )
+
+        # breakpoint()
+        # results = [(rid_to_tcol[race_id], rating[pos]) for race_id, pos in data]
+        # gl_res = sum(rating[pos] for _, pos in data)
+
+        # self.tab[p_id] = (p_name, results, gl_res)
+
+        # gl_res_order = sorted(
+        #     self.tab,
+        #     key=lambda k: (lambda name, res, gl_res: (-gl_res, name))(*self.tab[k]),
+        # )
+        # breakpoint()
+
+        for i, (index, row_data) in enumerate(self.tab.iterrows()):
+            for j, col in enumerate(self.tab.columns):
+                if row_data[col] == 0:
+                    row_data[col] = ""
+                self.results_table.setItem(i, j, QTableWidgetItem(str(row_data[col])))
+            # self.results_table.setItem(i, 0, QTableWidgetItem(str(row_data["participant"])))
+            # for rcol, score in results:
+            #     self.results_table.setItem(i, rcol, QTableWidgetItem(str(score)))
+            # self.results_table.setItem(
+            #     i, self.results_table.columnCount() - 1, QTableWidgetItem(str(gl_res))
+            # )
+
+        # for i, p_id in enumerate(gl_res_order):
+        #     p_name, results, gl_res = self.tab[p_id]
+        # p_name = pid_to_name[p_id]
+        # results = [(rid_to_tcol[race_id], rating[pos]) for race_id, pos in data]
+        # gl_res = sum(rating[pos] for _, pos in data)
+
+        # self.results_table.setItem(i, 0, QTableWidgetItem(str(p_name)))
+        # for rcol, score in results:
+        #     self.results_table.setItem(i, rcol, QTableWidgetItem(str(score)))
+        # self.results_table.setItem(
+        #     i, self.results_table.columnCount() - 1, QTableWidgetItem(str(gl_res))
+        # )
 
         # for i, p_id in enumerate(pid_to_data, start=1):
         #     self.results_table.setItem(
@@ -339,7 +320,7 @@ class MainWindow(QMainWindow):
             participant_id = cursor.fetchone()[0]
             # print(f"{participant_id = }")
 
-            print(race_id, f"{pos = }", participant, f"{participant_id = }")
+            # print(race_id, f"{pos = }", participant, f"{participant_id = }")
             # Insert race result
             cursor.execute(
                 """
@@ -359,14 +340,88 @@ class MainWindow(QMainWindow):
             )
         self.conn.commit()
 
-        cursor.execute(
-            "SELECT race_id, position, participant_id FROM race_results WHERE race_id = (?)",
-            (race_id,),
-        )
-        print(cursor.fetchall())
-
         # update the combobox items
         self.populate_classes()
+
+    def export_excel(self):
+        class_name = self.class_combo.currentText()
+        if not class_name:
+            return
+
+        cols = self.tab.columns.to_list()
+        _, *dates, _ = cols.copy()
+        new_cols = ["Участник", *dates, "Итог"]
+        new_cols = dict(zip(cols, new_cols))
+        renamed_df = self.tab.rename(columns=new_cols)
+
+        renamed_df.to_excel(f"{class_name}_results.xlsx", index=False)
+
+    def export_pdf(self):
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+
+        class_name = self.class_combo.currentText()
+        if not class_name:
+            return
+
+        cols = self.tab.columns.to_list()
+        _, *dates, _ = cols.copy()
+        new_cols = ["Участник", *dates, "Итог"]
+        new_cols = dict(zip(cols, new_cols))
+        renamed_df = self.tab.rename(columns=new_cols)
+
+        document = SimpleDocTemplate(f"{class_name}_results.pdf", pagesize=letter)
+        # Register a font that supports Cyrillic characters
+        pdfmetrics.registerFont(TTFont("DejaVuSans", "Ubuntu-L.ttf"))
+
+        # Create a list to hold the table elements
+        elements = []
+
+        # Convert DataFrame to a list of lists
+        data_for_table = [renamed_df.columns.tolist()] + renamed_df.values.tolist()
+
+        # Create a Table
+        table = Table(data_for_table)
+
+        # Add style to the table
+        style = TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.grey),  # Header background color
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),  # Header text color
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),  # Center align all cells
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),  # Header font
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 12),  # Padding for header
+                (
+                    "BACKGROUND",
+                    (0, 1),
+                    (-1, -1),
+                    colors.beige,
+                ),  # Background color for data rows
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),  # Grid lines
+            ]
+        )
+
+        table.setStyle(style)
+
+        # Add the table to the elements list
+        elements.append(table)
+
+        # Build the PDF
+        document.build(elements)
+
+        # pdf = canvas.Canvas(f"{class_name}_results.pdf", pagesize=pagesizes.A4)
+        # pdf.setFont("Helvetica", 12)
+        # y = 800
+        # for row in cursor.fetchall():
+        #     pdf.drawString(100, y, f"{row[1]}. {row[0]}")
+        #     y -= 20
+        #     if y < 50:
+        #         pdf.showPage()
+        #         y = 800
+        # pdf.save()
 
 
 class ImageLoaderDialog(QDialog):
