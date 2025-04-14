@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
 )
-import datetime
+from datetime import datetime
 from PySide6.QtGui import QAction, QImage, QPixmap, QColor, QBrush
 from PySide6.QtCore import Qt
 import sqlite3
@@ -173,9 +173,9 @@ class ImageLoaderDialog(QDialog):
         layout.addWidget(self.table, 50)
 
         # Buttons
-        self.load_btn = QPushButton("Load Image")
-        self.load_btn.clicked.connect(self.load_image)
-        layout.addWidget(self.load_btn)
+        self.cont_btn = QPushButton("Continue")
+        self.cont_btn.clicked.connect(self.export_table)
+        layout.addWidget(self.cont_btn)
 
         self.setLayout(layout)
 
@@ -218,7 +218,7 @@ class ImageLoaderDialog(QDialog):
 
         self._add_row(0, "Класс моделей", *race_result.full_typ)
         date, conf = race_result.full_date
-        date = date.strftime("%d.%m.%Y") if isinstance(date, datetime.date) else ""
+        date = date.strftime("%d.%m.%Y") if not isinstance(date, str) else ""
         self._add_row(1, "Дата", date, conf)
         self._add_row(3, "Позиция", "Участник", "", show_color=False)
 
@@ -230,6 +230,16 @@ class ImageLoaderDialog(QDialog):
             pos_item.setTextAlignment(Qt.AlignCenter)
 
         self.table.resizeColumnsToContents()
+
+    def export_table(self):
+        race_typ = self.table.item(0, 1).text()
+        print(self.table.item(1, 1).text())
+        date = datetime.strptime(self.table.item(1, 1).text(), "%d.%m.%Y").date()
+        participants = [
+            self.table.item(i, 1).text() for i in range(4, self.table.rowCount())
+        ]
+
+        return race_typ, date, participants
 
 
 if __name__ == "__main__":
