@@ -195,7 +195,7 @@ class ImageLoaderDialog(QDialog):
             race_result = ocr_image(Path(fname))
             self.process_ocr_text(race_result)
 
-    def add_row(self, row_cnt, first, text, confidence, *, show_color=True):
+    def _add_row(self, row_cnt, first, text, confidence, *, show_color=True):
         self.table.setItem(row_cnt, 0, QTableWidgetItem(str(first)))
         self.table.setItem(row_cnt, 1, QTableWidgetItem(str(text)))
         if show_color:
@@ -216,16 +216,16 @@ class ImageLoaderDialog(QDialog):
         self.table.setRowCount(4 + len(race_result.full_participants))
         self.table.setColumnCount(3)
 
-        self.add_row(0, "Класс моделей", *race_result.full_typ)
+        self._add_row(0, "Класс моделей", *race_result.full_typ)
         date, conf = race_result.full_date
         date = date.strftime("%d.%m.%Y") if isinstance(date, datetime.date) else ""
-        self.add_row(1, "Дата", date, conf)
-        self.add_row(3, "Позиция", "Участник", "Уверенность", show_color=False)
+        self._add_row(1, "Дата", date, conf)
+        self._add_row(3, "Позиция", "Участник", "", show_color=False)
 
         for i, (participant, confidence) in enumerate(
             race_result.full_participants, start=4
         ):
-            self.add_row(i, i - 3, participant, confidence)
+            self._add_row(i, i - 3, participant, confidence)
             pos_item = self.table.item(i, 0)
             pos_item.setTextAlignment(Qt.AlignCenter)
 
