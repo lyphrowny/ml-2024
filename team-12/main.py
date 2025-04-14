@@ -259,15 +259,40 @@ class MainWindow(QMainWindow):
         ]
         rating.extend(range(26, 0, -1))
 
-        for i, p_id in enumerate(pid_to_data, start=1):
+        tab = {}
+        for i, (p_id, data) in enumerate(pid_to_data.items()):
+            p_name = pid_to_name[p_id]
+            results = [(rid_to_tcol[race_id], rating[pos]) for race_id, pos in data]
+            gl_res = sum(rating[pos] for _, pos in data)
+
+            tab[p_id] = (p_name, results, gl_res)
+
+        gl_res_order = sorted(
+            tab, key=lambda k: (lambda name, res, gl_res: (-gl_res, name))(*tab[k])
+        )
+
+        for i, p_id in enumerate(gl_res_order):
+            p_name, results, gl_res = tab[p_id]
+            # p_name = pid_to_name[p_id]
+            # results = [(rid_to_tcol[race_id], rating[pos]) for race_id, pos in data]
+            # gl_res = sum(rating[pos] for _, pos in data)
+
+            self.results_table.setItem(i, 0, QTableWidgetItem(str(p_name)))
+            for rcol, score in results:
+                self.results_table.setItem(i, rcol, QTableWidgetItem(str(score)))
             self.results_table.setItem(
-                i - 1, 0, QTableWidgetItem(str(pid_to_name[p_id]))
+                i, self.results_table.columnCount() - 1, QTableWidgetItem(str(gl_res))
             )
-            print(pid_to_data[p_id])
-            for race_id, pos in pid_to_data[p_id]:
-                self.results_table.setItem(
-                    i - 1, rid_to_tcol[race_id], QTableWidgetItem(str(rating[pos]))
-                )
+
+        # for i, p_id in enumerate(pid_to_data, start=1):
+        #     self.results_table.setItem(
+        #         i - 1, 0, QTableWidgetItem(str(pid_to_name[p_id]))
+        #     )
+        #     print(pid_to_data[p_id])
+        #     for race_id, pos in pid_to_data[p_id]:
+        #         self.results_table.setItem(
+        #             i - 1, rid_to_tcol[race_id], QTableWidgetItem(str(rating[pos]))
+        #         )
 
         self.results_table.resizeColumnsToContents()
 
