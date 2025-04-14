@@ -190,28 +190,16 @@ class ImageLoaderDialog(QDialog):
             image = QImage(fname)
             self.image_label.setPixmap(QPixmap.fromImage(image).scaledToWidth(500))
 
+            self.show()
             # OCR Processing
             race_result = ocr_image(Path(fname))
             self.process_ocr_text(race_result)
-            self.show()
-            # img = Image.open(fname)
-            # text = pytesseract.image_to_string(img)
-            # self.process_ocr_text(text)
-
-    def _color_cell(self, qitem, confidence):
-        color = QColor(0, 255, 0)
-        if 40 < confidence < 70:
-            color = QColor(255, 255, 0)
-        else:
-            color = QColor(255, 0, 0)
-        qitem.setBackground(QBrush(color))
-        return qitem
 
     def add_row(self, row_cnt, first, text, confidence, *, show_color=True):
         self.table.setItem(row_cnt, 0, QTableWidgetItem(str(first)))
         self.table.setItem(row_cnt, 1, QTableWidgetItem(str(text)))
         if show_color:
-            qitem = QTableWidgetItem()
+            qitem = QTableWidgetItem(f"{confidence / 100:.2f}")
             color = QColor(0, 255, 0)
             if 40 < confidence < 70:
                 color = QColor(255, 255, 0)
@@ -221,6 +209,7 @@ class ImageLoaderDialog(QDialog):
         else:
             qitem = QTableWidgetItem(str(confidence))
 
+        qitem.setTextAlignment(Qt.AlignCenter)
         self.table.setItem(row_cnt, 2, qitem)
 
     def process_ocr_text(self, race_result: RaceResult):
@@ -233,24 +222,6 @@ class ImageLoaderDialog(QDialog):
         self.add_row(1, "Дата", date, conf)
         self.add_row(3, "Позиция", "Участник", "Уверенность", show_color=False)
 
-        # self.table.setItem(0, 0, QTableWidgetItem("Класс моделей"))
-        # self.table.setItem(0, 1, QTableWidgetItem(race_result.full_typ[0]))
-        # # self.table.setItem(0, 2, QTableWidgetItem(str(race_result.full_typ[1])))
-        # self.table.setItem(
-        #     0, 2, self._color_cell(QTableWidgetItem(), race_result.full_typ[1])
-        # )
-
-        # self.table.setItem(1, 0, QTableWidgetItem("Дата"))
-        # self.table.setItem(1, 1, QTableWidgetItem(str(race_result.full_date[0])))
-        # # self.table.setItem(1, 2, QTableWidgetItem(str(race_result.full_date[1])))
-        # self.table.setItem(
-        #     1, 2, self._color_cell(QTableWidgetItem(), race_result.full_date[1])
-        # )
-
-        # self.table.setItem(3, 0, QTableWidgetItem("Позиция"))
-        # self.table.setItem(3, 1, QTableWidgetItem("Участник"))
-        # self.table.setItem(3, 2, QTableWidgetItem("Уверенность"))
-
         for i, (participant, confidence) in enumerate(
             race_result.full_participants, start=4
         ):
@@ -258,20 +229,7 @@ class ImageLoaderDialog(QDialog):
             pos_item = self.table.item(i, 0)
             pos_item.setTextAlignment(Qt.AlignCenter)
 
-            # self.table.setItem(i, 0, QTableWidgetItem(str(i - 3), Qt.AlignCenter))
-            # self.table.setItem(i, 1, QTableWidgetItem(participant))
-            # # self.table.setItem(i, 2, QTableWidgetItem(str(confidence)))
-            # self.table.setItem(i, 2, self._color_cell(QTableWidgetItem(), confidence))
-
         self.table.resizeColumnsToContents()
-
-        # # Implement your OCR parsing logic here
-        # # Example parsing (customize according to your OCR results format):
-        # rows = [line.split() for line in text.split('\n') if line.strip()]
-        # self.table.setRowCount(len(rows))
-        # for i, row in enumerate(rows):
-        #     self.table.setItem(i, 0, QTableWidgetItem(' '.join(row[:-1])))
-        #     self.table.setItem(i, 1, QTableWidgetItem(row[-1]))
 
 
 if __name__ == "__main__":
