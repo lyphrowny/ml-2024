@@ -96,7 +96,14 @@ class MainWindow(QMainWindow):
         # Race Class Selector
         self.class_combo = QComboBox()
         self.populate_classes()
-        self.layout.addWidget(self.class_combo)
+        hlayout = QHBoxLayout()
+        hlayout.addWidget(self.class_combo, 80)
+        # self.layout.addWidget(self.class_combo)
+
+        self.show_btn = QPushButton("Show")
+        self.show_btn.clicked.connect(self.build_table_result)
+        hlayout.addWidget(self.show_btn, 20)
+        self.layout.addLayout(hlayout)
 
         # Results Table
         self.results_table = QTableWidget()
@@ -108,6 +115,8 @@ class MainWindow(QMainWindow):
 
         # Import Action
         self.image_loader_dialog = ImageLoaderDialog()
+        self.image_loader_dialog.cont_btn.clicked.connect(self._on_image_loaded)
+
         import_action = QAction("Import Results", self)
         import_action.triggered.connect(self.image_loader_dialog.load_image)
         # import_action.triggered.connect(self.show_image_loader)
@@ -129,20 +138,35 @@ class MainWindow(QMainWindow):
 
     def create_tables(self):
         cursor = self.conn.cursor()
+
+        # Races table remains the same
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS races (
                 id INTEGER PRIMARY KEY,
-                class_name TEXT UNIQUE,
-                date_added DATETIME DEFAULT CURRENT_TIMESTAMP
+                class_name TEXT,
+                date_added DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(class_name, date_added)
             )
         """)
+
+        # Participants table (now stores individual competitor info)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS participants (
                 id INTEGER PRIMARY KEY,
+                full_name TEXT UNIQUE
+            )
+        """)
+
+        # Race Results (links participants to races with positions)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS race_results (
+                id INTEGER PRIMARY KEY,
                 race_id INTEGER,
-                name TEXT,
+                participant_id INTEGER,
                 position INTEGER,
-                FOREIGN KEY(race_id) REFERENCES races(id)
+                FOREIGN KEY(race_id) REFERENCES races(id),
+                FOREIGN KEY(participant_id) REFERENCES participants(id),
+                UNIQUE(race_id, participant_id)
             )
         """)
         self.conn.commit()
@@ -152,6 +176,66 @@ class MainWindow(QMainWindow):
         cursor.execute("SELECT class_name FROM races")
         self.class_combo.clear()
         self.class_combo.addItems([row[0] for row in cursor.fetchall()])
+
+    def build_table_result(self): ...
+
+    def _on_image_loaded(self):
+        race_typ, date, participants = self.image_loader_dialog.export_table()
+        self.image_loader_dialog.close()
+
+        cursor = self.conn.cursor()
+        print(f"{race_typ = }")
+        print(f"{date = }")
+
+        cursor.execute("select * from races")
+        res = cursor.fetchall()
+        print(res)
+
+        # Insert or get race ID
+        cursor.execute(
+            """
+            INSERT INTO races (class_name, date_added) VALUES (?, ?)
+            ON CONFLICT(class_name, date_added)
+            DO UPDATE SET
+                class_name = excluded.class_name,
+                date_added = excluded.date_added
+            RETURNING id
+            """,
+            (
+                race_typ,
+                date.strftime("%Y-%m-%d"),
+            ),
+        )
+        race_id = cursor.fetchone()[0]
+        print(race_id)
+
+        for pos, participant in enumerate(participants, start=1):
+            # Insert or get participant
+            cursor.execute(
+                """
+                INSERT INTO participants (full_name) VALUES (?)
+                ON CONFLICT(full_name) DO UPDATE SET full_name=full_name
+                RETURNING id
+            """,
+                (participant,),
+            )
+            participant_id = cursor.fetchone()[0]
+            print(f"{participant_id = }")
+
+            # Insert race result
+            cursor.execute(
+                """
+                INSERT INTO race_results (race_id, participant_id, position)
+                VALUES (?, ?, ?)
+                ON CONFLICT(race_id, participant_id)
+                DO UPDATE SET
+                    race_id = excluded.race_id,
+                    participant_id = excluded.participant_id,
+                    position = position
+            """,
+                (race_id, participant_id, pos),
+            )
+        self.conn.commit()
 
 
 class ImageLoaderDialog(QDialog):
@@ -168,13 +252,13 @@ class ImageLoaderDialog(QDialog):
 
         # Editable Table
         self.table = QTableWidget()
-        self.table.setColumnCount(2)
-        self.table.setHorizontalHeaderLabels(["Name", "Position"])
+        # self.table.setColumnCount(2)
+        # self.table.setHorizontalHeaderLabels(["Name", "Position"])
         layout.addWidget(self.table, 50)
 
         # Buttons
         self.cont_btn = QPushButton("Continue")
-        self.cont_btn.clicked.connect(self.export_table)
+        # self.cont_btn.clicked.connect(self.export_table)
         layout.addWidget(self.cont_btn)
 
         self.setLayout(layout)
@@ -233,7 +317,6 @@ class ImageLoaderDialog(QDialog):
 
     def export_table(self):
         race_typ = self.table.item(0, 1).text()
-        print(self.table.item(1, 1).text())
         date = datetime.strptime(self.table.item(1, 1).text(), "%d.%m.%Y").date()
         participants = [
             self.table.item(i, 1).text() for i in range(4, self.table.rowCount())
