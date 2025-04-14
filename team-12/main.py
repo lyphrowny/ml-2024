@@ -126,7 +126,7 @@ class MainWindow(QMainWindow):
 
     def populate_classes(self):
         cursor = self.conn.cursor()
-        cursor.execute("SELECT class_name FROM races")
+        cursor.execute("SELECT DISTINCT class_name FROM races")
         self.class_combo.clear()
         self.class_combo.addItems([row[0] for row in cursor.fetchall()])
 
