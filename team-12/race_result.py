@@ -6,13 +6,17 @@ import attrs
 
 @attrs.define
 class RaceResult:
-    full_typ: tuple[str, float]
-    date: date
-    full_participants: Collection[tuple[str, float]]
+    full_typ: tuple[str, int]
+    full_date: tuple[date, int]
+    full_participants: Collection[tuple[str, int]]
 
     @property
     def typ(self):
         return self.full_typ[0]
+
+    @property
+    def date(self):
+        return self.full_date[0]
 
     @property
     def participants(self):

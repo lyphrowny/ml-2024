@@ -151,7 +151,7 @@ def match_date(ocr_date):
         )
     except ValueError:
         race_date = ""
-    confidence = 90 if race_date.strip() else 0
+    confidence = 90 if race_date else 0
     return race_date, confidence
 
 

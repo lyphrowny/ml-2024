@@ -8,7 +8,10 @@ dependencies = [
     "attrs>=25.3.0",
     "numpy>=2.2.4",
     "opencv-contrib-python-headless>=4.11.0.86",
+    "openpyxl>=3.1.5",
+    "pandas>=2.2.3",
     "pyside6>=6.9.0",
     "pytesseract>=0.3.13",
+    "reportlab>=4.3.1",
     "thefuzz>=0.22.1",
 ]
